@@ -239,7 +239,7 @@ fun SignalCardItem(signal: ScalpSignal) {
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Confidence: %0.0f%%".format(signal.confidence),
+                        text = "Confidence: ${signal.confidence.toInt()}%",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = GoldLight
