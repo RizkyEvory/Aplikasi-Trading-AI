@@ -63,9 +63,26 @@ class MarketViewModel(
     private val _showBB = MutableStateFlow(false)
     val showBB: StateFlow<Boolean> = _showBB.asStateFlow()
 
+    private var pollingJob: Job? = null
+
     init {
         // Initial candle pull
         loadChartData()
+        startPollingWatchlist()
+    }
+
+    fun startPollingWatchlist() {
+        pollingJob?.cancel()
+        pollingJob = viewModelScope.launch {
+            while (true) {
+                try {
+                    marketRepository.refreshWatchlistPrices()
+                } catch (e: Exception) {
+                    // Ignore
+                }
+                delay(30000) // Update database with actual live prices every 30s
+            }
+        }
     }
 
     fun selectSymbol(symbol: String, name: String) {
@@ -116,6 +133,11 @@ class MarketViewModel(
         viewModelScope.launch {
             marketRepository.toggleWatchlist(item.symbol, item.name, item.type)
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        pollingJob?.cancel()
     }
 }
 

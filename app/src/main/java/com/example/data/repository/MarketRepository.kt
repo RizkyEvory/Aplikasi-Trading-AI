@@ -24,16 +24,118 @@ class MarketRepository(
                 watchlistDao.delete(item)
             }
         } else {
+            // Fetch live initial price if valid API keys exist, otherwise fall back to base mock price
+            var basePrice = getMockBasePrice(symbol)
+            var baseChange = Random.nextDouble(-1.5, 2.0)
+
+            val fhKey = keyManager.getApiKey("FINNHUB")
+            val twKey = keyManager.getApiKey("TWELVEDATA")
+            var fetched = false
+
+            if (fhKey.isNotBlank()) {
+                try {
+                    val quote = RetrofitClient.finnhubService.getQuote(symbol, fhKey)
+                    if (quote.c > 0) {
+                        basePrice = quote.c
+                        baseChange = quote.dp ?: baseChange
+                        fetched = true
+                    }
+                } catch (e: Exception) {
+                    // Ignore and move to next fallback
+                }
+            }
+
+            if (!fetched && twKey.isNotBlank()) {
+                try {
+                    val series = RetrofitClient.twelveDataService.getTimeSeries(symbol, "1day", 2, twKey)
+                    if (series.values != null && series.values.isNotEmpty()) {
+                        val latestPrice = series.values[0].close.toDoubleOrNull()
+                        if (latestPrice != null) {
+                            basePrice = latestPrice
+                            if (series.values.size >= 2) {
+                                val prev = series.values[1].close.toDoubleOrNull()
+                                if (prev != null && prev > 0) {
+                                    baseChange = ((latestPrice - prev) / prev) * 100.0
+                                }
+                            }
+                            fetched = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore
+                }
+            }
+
             watchlistDao.insert(
                 WatchlistItem(
                     symbol = symbol,
                     name = name,
                     type = type,
-                    price = getMockBasePrice(symbol),
-                    change = Random.nextDouble(-3.5, 3.5),
+                    price = basePrice,
+                    change = baseChange,
                     addedAt = System.currentTimeMillis()
                 )
             )
+        }
+    }
+
+    // Refresh currently pinned assets with real time API quotes
+    suspend fun refreshWatchlistPrices() {
+        val items = watchlistDao.getAllList()
+        if (items.isEmpty()) return
+
+        val fhKey = keyManager.getApiKey("FINNHUB")
+        val twKey = keyManager.getApiKey("TWELVEDATA")
+
+        for (item in items) {
+            var updatedPrice = item.price
+            var updatedChange = item.change
+            var updated = false
+
+            // Try Finnhub first
+            if (fhKey.isNotBlank()) {
+                try {
+                    val quote = RetrofitClient.finnhubService.getQuote(item.symbol, fhKey)
+                    if (quote.c > 0) {
+                        updatedPrice = quote.c
+                        updatedChange = quote.dp ?: item.change
+                        updated = true
+                    }
+                } catch (e: Exception) {
+                    // fall back
+                }
+            }
+
+            // Try Twelve Data daily candles if not updated yet
+            if (!updated && twKey.isNotBlank()) {
+                try {
+                    val series = RetrofitClient.twelveDataService.getTimeSeries(item.symbol, "1day", 2, twKey)
+                    if (series.values != null && series.values.isNotEmpty()) {
+                        val latestPrice = series.values[0].close.toDoubleOrNull()
+                        if (latestPrice != null) {
+                            updatedPrice = latestPrice
+                            if (series.values.size >= 2) {
+                                val prev = series.values[1].close.toDoubleOrNull()
+                                if (prev != null && prev > 0) {
+                                    updatedChange = ((latestPrice - prev) / prev) * 100.0
+                                }
+                            }
+                            updated = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    // fall back
+                }
+            }
+
+            if (updated) {
+                watchlistDao.insert(
+                    item.copy(
+                        price = updatedPrice,
+                        change = updatedChange
+                    )
+                )
+            }
         }
     }
 
@@ -76,9 +178,21 @@ class MarketRepository(
         val twKey = keyManager.getApiKey("TWELVEDATA")
         if (twKey.isNotBlank()) {
             try {
+                // Map interval selector strings to Twelve Data friendly standards
+                val mappedInterval = when (interval) {
+                    "1m" -> "1min"
+                    "5m" -> "5min"
+                    "15m" -> "15min"
+                    "1H" -> "1h"
+                    "4H" -> "4h"
+                    "Daily" -> "1day"
+                    "Weekly" -> "1week"
+                    else -> interval
+                }
+
                 val res = RetrofitClient.twelveDataService.getTimeSeries(
                     symbol = symbol,
-                    interval = interval,
+                    interval = mappedInterval,
                     outputSize = 60,
                     apiKey = twKey
                 )
@@ -87,12 +201,22 @@ class MarketRepository(
                         keyManager.markLimitReached("TWELVEDATA")
                     }
                 } else {
-                    // Turn Twelve values to candles
-                    val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
-                    sdf.timeZone = TimeZone.getTimeZone("UTC")
+                    // Parse raw candle datetime strings (robust with fallback for day format like YYYY-MM-DD vs subday with clock)
+                    val sdfSeconds = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+                    val sdfFull = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+                    val sdfDay = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+
                     return res.values.mapNotNull { v ->
                         val date = try {
-                            sdf.parse(v.datetime)?.time ?: System.currentTimeMillis()
+                            if (v.datetime.contains(" ")) {
+                                if (v.datetime.count { it == ':' } == 2) {
+                                    sdfSeconds.parse(v.datetime)?.time
+                                } else {
+                                    sdfFull.parse(v.datetime)?.time
+                                }
+                            } else {
+                                sdfDay.parse(v.datetime)?.time
+                            } ?: System.currentTimeMillis()
                         } catch (e: Exception) {
                             System.currentTimeMillis()
                         }

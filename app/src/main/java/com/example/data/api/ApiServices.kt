@@ -26,7 +26,8 @@ data class TwelveSymbol(
 data class TwelveSeriesResponse(
     val meta: TwelveMeta?,
     val values: List<TwelveCandleValue>?,
-    val status: String?
+    val status: String?,
+    val message: String? = null
 )
 
 data class TwelveMeta(
