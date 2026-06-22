@@ -1,0 +1,6 @@
+{
+  "name": "M4Di XAU",
+  "description": "Universal trading analyzer with real-time scalping entry signals, interactive charts, and AI advisor chatbot.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
