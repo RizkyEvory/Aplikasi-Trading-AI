@@ -71,3 +71,8 @@ data class ApiKeyInfo(
     val isLimitReached: Boolean = false,
     val requestCount: Int = 0
 ) : Serializable
+
+data class PriceTick(
+    val timestamp: Long,
+    val price: Double
+) : Serializable

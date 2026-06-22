@@ -11,7 +11,7 @@ import kotlin.random.Random
 
 class MarketRepository(
     private val watchlistDao: WatchlistDao,
-    private val keyManager: KeyManager
+    val keyManager: KeyManager
 ) {
 
     val watchlistStream: Flow<List<WatchlistItem>> = watchlistDao.getAll()
